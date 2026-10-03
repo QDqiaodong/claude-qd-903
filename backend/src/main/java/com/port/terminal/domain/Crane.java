@@ -28,5 +28,8 @@ public class Crane {
     private Integer stackLayers;
     private String yardZone;
     private Integer ratedEfficiency;
+    private String workArea;
+    private Integer inServiceLoad;
+    private Integer capacity;
     private String status;
 }

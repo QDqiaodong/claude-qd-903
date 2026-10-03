@@ -23,7 +23,8 @@ public final class Dict {
     public static final Map<String, String> SLOT_STATUS = Map.of(
             "EMPTY", "空", "OCCUPIED", "占用", "RESERVED", "预留", "DISABLED", "禁用");
     public static final Map<String, String> INSTRUCTION_STATUS = Map.of(
-            "PENDING", "待执行", "EXECUTING", "执行中", "COMPLETED", "已完成", "CANCELLED", "已取消");
+            "PENDING", "待执行", "EXECUTING", "执行中", "COMPLETED", "已完成", "CANCELLED", "已取消",
+            "PAUSED", "故障暂停", "TAKEN_OVER", "已接管");
     public static final Map<String, String> PICKUP_STATUS = Map.of(
             "BLOCKED", "不可提", "AVAILABLE", "可提", "OUT", "已出场");
 

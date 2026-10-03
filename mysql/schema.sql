@@ -1,5 +1,8 @@
 SET NAMES utf8mb4;
 
+DROP TABLE IF EXISTS takeover_decisions;
+DROP TABLE IF EXISTS takeover_items;
+DROP TABLE IF EXISTS takeover_sessions;
 DROP TABLE IF EXISTS driver_shifts;
 DROP TABLE IF EXISTS gate_transactions;
 DROP TABLE IF EXISTS work_instructions;
@@ -46,6 +49,9 @@ CREATE TABLE cranes (
     stack_layers INT,
     yard_zone VARCHAR(10),
     rated_efficiency INT NOT NULL,
+    work_area VARCHAR(40),
+    in_service_load INT NOT NULL DEFAULT 0,
+    capacity INT NOT NULL DEFAULT 4,
     status VARCHAR(20) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -124,11 +130,72 @@ CREATE TABLE work_instructions (
     instruction_type VARCHAR(20) NOT NULL,
     priority VARCHAR(20) NOT NULL,
     status VARCHAR(20) NOT NULL,
+    current_stage VARCHAR(30),
+    stage_confirmed TINYINT(1) NOT NULL DEFAULT 0,
     vessel_schedule_id BIGINT,
     created_at DATETIME NOT NULL,
     completed_at DATETIME,
     INDEX idx_instruction_container (container_no),
+    INDEX idx_instruction_crane_status (crane_code, status),
     INDEX idx_instruction_schedule (vessel_schedule_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 故障接管方案：同一故障机械只允许存在一份 OPEN（有效）方案
+CREATE TABLE takeover_sessions (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    session_no VARCHAR(30) NOT NULL UNIQUE,
+    failed_crane_code VARCHAR(20) NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    version INT NOT NULL DEFAULT 0,
+    opened_by VARCHAR(40) NOT NULL,
+    closed_by VARCHAR(40),
+    fault_reason VARCHAR(200),
+    opened_at DATETIME NOT NULL,
+    closed_at DATETIME,
+    closed_note VARCHAR(200),
+    -- 仅 OPEN 行占用机械编码，CLOSED 行该列为 NULL（MySQL 唯一索引允许多个 NULL），
+    -- 从而保证同一故障机械同时只有一份有效方案，历史方案仍可保留多条
+    open_crane_key VARCHAR(20) GENERATED ALWAYS AS (CASE WHEN status = 'OPEN' THEN failed_crane_code ELSE NULL END) STORED,
+    INDEX idx_session_crane (failed_crane_code, status),
+    UNIQUE KEY uk_open_session_per_crane (open_crane_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 接管方案中的指令明细（待执行/执行中指令各一条）
+CREATE TABLE takeover_items (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    session_id BIGINT NOT NULL,
+    instruction_id BIGINT NOT NULL,
+    instruction_no VARCHAR(30) NOT NULL,
+    item_state VARCHAR(30) NOT NULL,
+    was_executing TINYINT(1) NOT NULL DEFAULT 0,
+    frozen_stage VARCHAR(30),
+    frozen_stage_confirmed TINYINT(1) NOT NULL DEFAULT 0,
+    takeover_crane_code VARCHAR(20),
+    failure_reason VARCHAR(200),
+    decided_by VARCHAR(40),
+    decided_at DATETIME,
+    version INT NOT NULL DEFAULT 0,
+    UNIQUE KEY uk_item_session_instruction (session_id, instruction_id),
+    INDEX idx_item_session (session_id, item_state),
+    INDEX idx_item_instruction (instruction_id),
+    CONSTRAINT fk_item_session FOREIGN KEY (session_id) REFERENCES takeover_sessions(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 接管决策流水：每次暂停/转交/拒绝/恢复/关闭都留痕
+CREATE TABLE takeover_decisions (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    session_id BIGINT NOT NULL,
+    instruction_id BIGINT,
+    instruction_no VARCHAR(30),
+    action VARCHAR(30) NOT NULL,
+    from_state VARCHAR(30),
+    to_state VARCHAR(30),
+    failed_crane_code VARCHAR(20),
+    takeover_crane_code VARCHAR(20),
+    reason VARCHAR(400),
+    operator VARCHAR(40) NOT NULL,
+    created_at DATETIME NOT NULL,
+    INDEX idx_decision_session (session_id, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE gate_transactions (
@@ -158,15 +225,17 @@ INSERT INTO vessel_schedules (berth_id, vessel_name, voyage_no, shipping_company
 (1, '达飞里沃利', 'CMA-622S', '达飞轮船', UTC_TIMESTAMP() + INTERVAL 8 HOUR + INTERVAL 32 HOUR, UTC_TIMESTAMP() + INTERVAL 8 HOUR + INTERVAL 49 HOUR, 1540, 'BOTH', NULL, 'EXPECTED'),
 (2, '地中海伊莎贝拉', 'MSC-509A', '地中海航运', UTC_TIMESTAMP() + INTERVAL 8 HOUR + INTERVAL 51 HOUR, UTC_TIMESTAMP() + INTERVAL 8 HOUR + INTERVAL 72 HOUR, 2050, 'BOTH', NULL, 'EXPECTED');
 
-INSERT INTO cranes (code, crane_type, rated_load, lifting_height, trolley_speed, span, stack_layers, yard_zone, rated_efficiency, status) VALUES
-('QC01', 'QUAY', 65.00, 48.00, 240.00, NULL, NULL, NULL, 32, 'WORKING'),
-('QC02', 'QUAY', 70.00, 52.00, 250.00, NULL, NULL, NULL, 35, 'WORKING'),
-('QC03', 'QUAY', 65.00, 46.00, 230.00, NULL, NULL, NULL, 30, 'WORKING'),
-('QC04', 'QUAY', 60.00, 44.00, 220.00, NULL, NULL, NULL, 28, 'STANDBY'),
-('YC01', 'YARD', 41.00, 18.00, 90.00, 23.47, 5, 'A', 24, 'WORKING'),
-('YC02', 'YARD', 41.00, 18.00, 90.00, 23.47, 5, 'A', 24, 'STANDBY'),
-('YC03', 'YARD', 45.00, 20.00, 95.00, 26.00, 6, 'B', 22, 'WORKING'),
-('YC04', 'YARD', 41.00, 18.00, 88.00, 23.47, 5, 'C', 22, 'FAULT');
+INSERT INTO cranes (code, crane_type, rated_load, lifting_height, trolley_speed, span, stack_layers, yard_zone, rated_efficiency, work_area, in_service_load, capacity, status) VALUES
+('QC01', 'QUAY', 65.00, 48.00, 240.00, NULL, NULL, NULL, 32, 'B01', 2, 3, 'WORKING'),
+('QC02', 'QUAY', 70.00, 52.00, 250.00, NULL, NULL, NULL, 35, 'B01', 2, 3, 'WORKING'),
+('QC03', 'QUAY', 65.00, 46.00, 230.00, NULL, NULL, NULL, 30, 'B02', 1, 3, 'WORKING'),
+('QC04', 'QUAY', 60.00, 44.00, 220.00, NULL, NULL, NULL, 28, NULL, 0, 3, 'STANDBY'),
+('YC01', 'YARD', 41.00, 18.00, 90.00, 23.47, 5, 'A', 24, 'A', 0, 4, 'FAULT'),
+('YC02', 'YARD', 41.00, 18.00, 90.00, 23.47, 5, 'A', 24, 'A', 1, 4, 'WORKING'),
+('YC03', 'YARD', 45.00, 20.00, 95.00, 26.00, 6, 'B', 22, 'B', 1, 4, 'WORKING'),
+('YC04', 'YARD', 41.00, 18.00, 88.00, 23.47, 5, 'C', 22, 'C', 0, 4, 'FAULT'),
+('YC05', 'YARD', 25.00, 18.00, 90.00, 23.47, 5, 'A', 24, 'A', 3, 3, 'WORKING'),
+('YC06', 'YARD', 50.00, 20.00, 96.00, 26.00, 6, 'A', 26, 'A,B', 1, 4, 'STANDBY');
 
 INSERT INTO driver_shifts (crane_id, driver_name, shift_start, shift_end, handled_boxes, work_hours) VALUES
 (1, '陈海峰', UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 8 HOUR, UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 7 HOUR, 29, 1.0),
@@ -255,18 +324,38 @@ UPDATE yard_slots SET status='OCCUPIED', occupied_container_no='CAXU8801203' WHE
 UPDATE yard_slots SET status='OCCUPIED', occupied_container_no='NYKU7732104' WHERE yard_zone='B' AND bay=2 AND slot_row=1 AND tier=1;
 UPDATE yard_slots SET status='OCCUPIED', occupied_container_no='ZIMU7213409' WHERE yard_zone='C' AND bay=1 AND slot_row=1 AND tier=1;
 
-INSERT INTO work_instructions (instruction_no, container_no, from_yard_zone, from_bay, from_row, from_tier, to_yard_zone, to_bay, to_row, to_tier, crane_code, instruction_type, priority, status, vessel_schedule_id, created_at, completed_at) VALUES
-('WI-20260928-001','MSCU1234567',NULL,NULL,NULL,NULL,'A',1,1,1,'QC01','UNLOAD','VESSEL_CUTOFF','COMPLETED',1,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 28 HOUR,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 27 HOUR),
-('WI-20260928-002','COSU7654321',NULL,NULL,NULL,NULL,'A',1,3,1,'QC02','UNLOAD','NORMAL','COMPLETED',1,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 25 HOUR,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 24 HOUR),
-('WI-20260928-003','TEMU2048123','A',1,4,1,NULL,NULL,NULL,NULL,'QC02','LOAD','URGENT','PENDING',1,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 3 HOUR,NULL),
-('WI-20260928-004','CMAU9081726','A',2,1,1,'A',2,3,2,'YC01','SHIFT','NORMAL','PENDING',1,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 2 HOUR,NULL),
-('WI-20260928-005','MSKU7741200',NULL,NULL,NULL,NULL,'B',1,1,1,'QC03','UNLOAD','URGENT','COMPLETED',2,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 13 HOUR,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 12 HOUR),
-('WI-20260928-006','CAXU8801203','B',1,2,1,NULL,NULL,NULL,NULL,'YC03','PICKUP','NORMAL','PENDING',2,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 1 HOUR,NULL),
-('WI-20260928-007','WHLU6673910',NULL,NULL,NULL,NULL,'A',3,2,1,'QC01','UNLOAD','NORMAL','COMPLETED',1,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 9 HOUR,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 8 HOUR),
-('WI-20260928-008','ZIMU7213409',NULL,NULL,NULL,NULL,'C',1,1,1,'YC04','UNLOAD','URGENT','COMPLETED',2,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 10 HOUR,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 9 HOUR),
-('WI-20260928-009','APLU3304912','A',2,5,1,NULL,NULL,NULL,NULL,'YC02','PICKUP','NORMAL','EXECUTING',1,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 40 MINUTE,NULL),
-('WI-20260928-010','NYKU7732104',NULL,NULL,NULL,NULL,'B',2,1,1,'QC03','UNLOAD','VESSEL_CUTOFF','COMPLETED',2,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 50 MINUTE,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 15 MINUTE),
-('WI-20260928-011','HLCU2285017','A',2,1,3,NULL,NULL,NULL,NULL,'QC02','LOAD','NORMAL','PENDING',1,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 20 MINUTE,NULL);
+INSERT INTO work_instructions (instruction_no, container_no, from_yard_zone, from_bay, from_row, from_tier, to_yard_zone, to_bay, to_row, to_tier, crane_code, instruction_type, priority, status, current_stage, stage_confirmed, vessel_schedule_id, created_at, completed_at) VALUES
+('WI-20260928-001','MSCU1234567',NULL,NULL,NULL,NULL,'A',1,1,1,'QC01','UNLOAD','VESSEL_CUTOFF','COMPLETED','DONE',1,1,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 28 HOUR,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 27 HOUR),
+('WI-20260928-002','COSU7654321',NULL,NULL,NULL,NULL,'A',1,3,1,'QC02','UNLOAD','NORMAL','COMPLETED','DONE',1,1,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 25 HOUR,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 24 HOUR),
+('WI-20260928-003','TEMU2048123','A',1,4,1,NULL,NULL,NULL,NULL,'QC02','LOAD','URGENT','PENDING',NULL,0,1,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 3 HOUR,NULL),
+('WI-20260928-004','CMAU9081726','A',2,1,1,'A',2,3,2,'YC01','SHIFT','NORMAL','PAUSED',NULL,0,1,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 2 HOUR,NULL),
+('WI-20260928-005','MSKU7741200',NULL,NULL,NULL,NULL,'B',1,1,1,'QC03','UNLOAD','URGENT','COMPLETED','DONE',1,2,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 13 HOUR,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 12 HOUR),
+('WI-20260928-006','CAXU8801203','B',1,2,1,NULL,NULL,NULL,NULL,'YC03','PICKUP','NORMAL','PENDING',NULL,0,2,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 1 HOUR,NULL),
+('WI-20260928-007','WHLU6673910',NULL,NULL,NULL,NULL,'A',3,2,1,'QC01','UNLOAD','NORMAL','COMPLETED','DONE',1,1,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 9 HOUR,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 8 HOUR),
+('WI-20260928-008','ZIMU7213409',NULL,NULL,NULL,NULL,'C',1,1,1,'YC04','UNLOAD','URGENT','COMPLETED','DONE',1,2,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 10 HOUR,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 9 HOUR),
+('WI-20260928-009','APLU3304912','A',2,5,1,NULL,NULL,NULL,NULL,'YC02','PICKUP','NORMAL','EXECUTING','SLINGING',1,1,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 40 MINUTE,NULL),
+('WI-20260928-010','NYKU7732104',NULL,NULL,NULL,NULL,'B',2,1,1,'QC03','UNLOAD','VESSEL_CUTOFF','COMPLETED','DONE',1,2,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 50 MINUTE,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 15 MINUTE),
+('WI-20260928-011','HLCU2285017','A',2,1,3,NULL,NULL,NULL,NULL,'QC02','LOAD','NORMAL','PENDING',NULL,0,1,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 20 MINUTE,NULL),
+('WI-20260928-012','MSCU1234567','A',1,1,1,NULL,NULL,NULL,NULL,'YC01','LOAD','URGENT','PAUSED','LIFTING',0,1,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 35 MINUTE,NULL),
+('WI-20260928-013','EISU3509184','A',2,2,2,NULL,NULL,NULL,NULL,'YC01','PICKUP','NORMAL','PAUSED',NULL,0,NULL,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 18 MINUTE,NULL),
+('WI-20260928-014','FCIU6190034','A',3,1,3,'A',2,4,1,'YC01','SHIFT','VESSEL_CUTOFF','PAUSED',NULL,0,1,UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 12 MINUTE,NULL);
+
+INSERT INTO takeover_sessions (session_no, failed_crane_code, status, version, opened_by, fault_reason, opened_at) VALUES
+('TS-20261003-001','YC01','OPEN',1,'张伟','起升机构异响，液压压力波动，司机就地停机报修',UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 18 MINUTE);
+
+INSERT INTO takeover_items (session_id, instruction_id, instruction_no, item_state, was_executing, frozen_stage, frozen_stage_confirmed, version)
+SELECT s.id, w.id, w.instruction_no,
+       CASE WHEN w.current_stage IS NOT NULL THEN 'FROZEN_EXECUTING' ELSE 'FROZEN_PENDING' END,
+       CASE WHEN w.current_stage IS NOT NULL THEN 1 ELSE 0 END,
+       w.current_stage, w.stage_confirmed, 0
+FROM takeover_sessions s
+JOIN work_instructions w ON w.crane_code = s.failed_crane_code
+   AND w.status IN ('PAUSED') AND w.instruction_no IN ('WI-20260928-004','WI-20260928-012','WI-20260928-013','WI-20260928-014')
+WHERE s.session_no = 'TS-20261003-001';
+
+INSERT INTO takeover_decisions (session_id, instruction_id, instruction_no, action, from_state, to_state, failed_crane_code, reason, operator, created_at)
+SELECT s.id, NULL, NULL, 'FAULT_REPORTED', NULL, 'OPEN', 'YC01', s.fault_reason, s.opened_by, s.opened_at
+FROM takeover_sessions s WHERE s.session_no = 'TS-20261003-001';
 
 INSERT INTO gate_transactions (lane_no, direction, plate_no, container_no, appointment_no, passing_time, inspection_result, congestion) VALUES
 ('IN-01','IN','沪B·7K21挂','MSCU1234567','APT-0928-001',UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 30 HOUR,'通过','畅通'),

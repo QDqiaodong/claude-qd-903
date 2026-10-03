@@ -1,9 +1,12 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { craneApi } from '../api'
 
 defineProps({ yardSelection: Object, zones: Array })
+
+const router = useRouter()
 
 const cranes = ref([])
 const selected = ref(null)
@@ -65,7 +68,9 @@ onMounted(load)
         <div class="card-index">{{ String(index + 1).padStart(2, '0') }}</div>
         <div class="card-top">
           <div><small>{{ crane.craneType === 'QUAY' ? '岸桥 / QUAY CRANE' : '场桥 / YARD CRANE' }}</small><h3>{{ crane.code }}</h3></div>
-          <div class="machine-status"><i :class="['status-dot', crane.status]"></i><span>{{ statusName[crane.status] }}</span></div>
+          <div class="machine-status"><i :class="['status-dot', crane.status]"></i><span>{{ statusName[crane.status] }}</span>
+            <el-button v-if="crane.status === 'FAULT'" link type="danger" size="small" @click.stop="router.push('/takeover')">接管台 →</el-button>
+          </div>
         </div>
         <div class="efficiency-number"><b>{{ crane.actualEfficiency }}</b><span>自然箱 / h</span><em>额定 {{ crane.ratedEfficiency }}</em></div>
         <div class="efficiency-track"><span :style="{ width: `${efficiencyPercent(crane)}%` }"></span><i :style="{ left: `${Math.min(98, efficiencyPercent(crane))}%` }"></i></div>
@@ -79,7 +84,7 @@ onMounted(load)
 
     <el-dialog v-model="dialog" width="560" :title="`${selected?.code || ''} · 司机排班与作业量`">
       <div v-if="selected" class="machine-console">
-        <div class="console-status"><span>机械状态</span><el-radio-group :model-value="selected.status" size="small" @change="changeStatus"><el-radio-button value="WORKING">作业</el-radio-button><el-radio-button value="STANDBY">待机</el-radio-button><el-radio-button value="FAULT">故障</el-radio-button></el-radio-group></div>
+        <div class="console-status"><span>机械状态</span><div><el-radio-group :model-value="selected.status" size="small" @change="changeStatus"><el-radio-button value="WORKING">作业</el-radio-button><el-radio-button value="STANDBY">待机</el-radio-button><el-radio-button value="FAULT" disabled>故障（请至接管台）</el-radio-button></el-radio-group><el-button v-if="selected.status !== 'FAULT'" link type="danger" size="small" @click.stop="router.push('/takeover')">转为故障 →</el-button></div></div>
         <el-form label-position="top" class="shift-form">
           <el-form-item label="司机姓名"><el-input v-model="form.driverName" placeholder="输入司机姓名" /></el-form-item>
           <el-form-item label="开始时间"><el-date-picker v-model="form.shiftStart" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" style="width:100%" /></el-form-item>

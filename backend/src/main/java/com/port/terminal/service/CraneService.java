@@ -60,6 +60,9 @@ public class CraneService {
     public Crane changeStatus(Long craneId, String status) {
         Crane crane = craneRepository.findById(craneId).orElseThrow(() -> new BizException("机械不存在"));
         if (!List.of("WORKING", "STANDBY", "FAULT").contains(status)) throw new BizException("机械状态无效");
+        if ("FAULT".equals(status) && !"FAULT".equals(crane.getStatus())) {
+            throw new BizException("转为故障必须在故障接管台上报，系统将自动冻结关联指令并开启接管方案");
+        }
         crane.setStatus(status);
         return craneRepository.save(crane);
     }

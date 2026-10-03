@@ -12,7 +12,8 @@ const processNodes = [
   { path: '/berths', code: '01', title: '泊位船期', note: '靠泊计划' },
   { path: '/cranes', code: '02', title: '岸桥作业', note: '装卸效率' },
   { path: '/yard', code: '03', title: '堆场箱位', note: '落位翻倒' },
-  { path: '/gates', code: '04', title: '闸口放行', note: '收提箱' }
+  { path: '/takeover', code: '04', title: '故障接管', note: '指令接管台' },
+  { path: '/gates', code: '05', title: '闸口放行', note: '收提箱' }
 ]
 
 const currentComponent = computed(() => currentRoute.value.matched.at(-1)?.components?.default || YardMatrix)

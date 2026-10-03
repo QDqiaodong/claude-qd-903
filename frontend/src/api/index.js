@@ -2,9 +2,23 @@ import axios from 'axios'
 
 const http = axios.create({ baseURL: '/api', timeout: 10000 })
 
+// 调度员身份：两名调度员并发处理时，后端用 X-Operator 记录每次决定的实际操作人
+let currentOperator = '张伟'
+export function setOperator(name) { currentOperator = name }
+export function getOperator() { return currentOperator }
+
+http.interceptors.request.use(config => {
+  config.headers['X-Operator'] = currentOperator
+  return config
+})
+
 http.interceptors.response.use(
   response => response.data,
-  error => Promise.reject(new Error(error.response?.data?.message || error.message || '网络请求失败'))
+  error => {
+    const e = new Error(error.response?.data?.message || error.message || '网络请求失败')
+    e.status = error.response?.status
+    return Promise.reject(e)
+  }
 )
 
 export const yardApi = {
@@ -46,4 +60,17 @@ export const operationApi = {
   instructions: () => http.get('/operations/instructions'),
   createInstruction: data => http.post('/operations/instructions', data),
   complete: id => http.post(`/operations/instructions/${id}/complete`)
+}
+
+export const takeoverApi = {
+  sessions: () => http.get('/takeover/sessions'),
+  detail: sessionId => http.get(`/takeover/sessions/${sessionId}`),
+  reportFault: (craneId, faultReason) => http.post(`/takeover/cranes/${craneId}/fault`, { faultReason }),
+  pause: (sessionId, itemIds) => http.post(`/takeover/sessions/${sessionId}/pause`, { itemIds }),
+  confirmStage: (sessionId, itemId, stage) => http.post(`/takeover/sessions/${sessionId}/items/${itemId}/confirm-stage`, { stage }),
+  handover: (sessionId, itemIds, takeoverCraneCode, mode) =>
+    http.post(`/takeover/sessions/${sessionId}/handover`, { itemIds, takeoverCraneCode, mode }),
+  resume: (sessionId, itemIds) => http.post(`/takeover/sessions/${sessionId}/resume`, { itemIds }),
+  craneRecovered: sessionId => http.post(`/takeover/sessions/${sessionId}/crane-recovered`),
+  close: (sessionId, note) => http.post(`/takeover/sessions/${sessionId}/close`, { note })
 }

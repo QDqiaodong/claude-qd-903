@@ -51,6 +51,24 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 并发版本冲突：409，提示后提交者方案已被他人修改
+     */
+    @ExceptionHandler(ConflictException.class)
+    public ResponseEntity<ApiResponse<Void>> handleConflict(ConflictException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.fail(e.getMessage()));
+    }
+
+    /**
+     * JPA 乐观锁冲突：两名调度员并发提交，后提交者必须刷新查看方案变化
+     */
+    @ExceptionHandler(org.springframework.orm.ObjectOptimisticLockingFailureException.class)
+    public ResponseEntity<ApiResponse<Void>> handleOptimisticLock(
+            org.springframework.orm.ObjectOptimisticLockingFailureException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.fail(
+                "接管方案已被另一名调度员修改，请刷新查看最新方案与剩余可处置指令后再提交"));
+    }
+
+    /**
      * 兜底：500
      */
     @ExceptionHandler(Exception.class)

@@ -20,13 +20,15 @@ public class OperationService {
     private final WorkInstructionRepository instructionRepository;
     private final ContainerRepository containerRepository;
     private final YardService yardService;
+    private final TakeoverService takeoverService;
     private final EntityManager entityManager;
 
     public OperationService(WorkInstructionRepository instructionRepository, ContainerRepository containerRepository,
-                            YardService yardService, EntityManager entityManager) {
+                            YardService yardService, TakeoverService takeoverService, EntityManager entityManager) {
         this.instructionRepository = instructionRepository;
         this.containerRepository = containerRepository;
         this.yardService = yardService;
+        this.takeoverService = takeoverService;
         this.entityManager = entityManager;
     }
 
@@ -57,6 +59,10 @@ public class OperationService {
             if (!"AVAILABLE".equals(container.getPickupStatus())) throw new BizException("提箱时箱号必须处于可提状态");
             if (!Boolean.TRUE.equals(container.getPaidInspection())) throw new BizException("提箱前必须完成付费查验标记");
         }
+        if (request.craneCode() != null && !request.craneCode().isBlank()) {
+            // 故障机械/接管冻结中的机械停止派入新任务
+            takeoverService.assertDispatchAllowed(request.craneCode());
+        }
         WorkInstruction instruction = new WorkInstruction();
         instruction.setInstructionNo("WI" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("MMddHHmmssSSS")));
         instruction.setContainerNo(container.getContainerNo());
@@ -82,6 +88,10 @@ public class OperationService {
         WorkInstruction instruction = instructionRepository.findById(id)
                 .orElseThrow(() -> new BizException("作业指令不存在"));
         if ("COMPLETED".equals(instruction.getStatus())) throw new BizException("作业指令已完成");
+        if ("PAUSED".equals(instruction.getStatus())) {
+            throw new BizException("指令因机械故障冻结中，需在接管台暂停、转交或等待恢复后才能继续执行");
+        }
+        if ("CANCELLED".equals(instruction.getStatus())) throw new BizException("指令已取消");
         if ("SHIFT".equals(instruction.getInstructionType())) {
             yardService.relocate(new SlotActionRequest(instruction.getContainerNo(), instruction.getToYardZone(),
                     instruction.getToBay(), instruction.getToRow(), instruction.getToTier()));

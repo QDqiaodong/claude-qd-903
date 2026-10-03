@@ -33,6 +33,8 @@ public class WorkInstruction {
     private String instructionType;
     private String priority;
     private String status;
+    private String currentStage;
+    private Boolean stageConfirmed;
     private Long vesselScheduleId;
     private LocalDateTime createdAt;
     private LocalDateTime completedAt;
