@@ -47,6 +47,9 @@ async function changeStatus(status) {
     await craneApi.setStatus(selected.value.id, status)
     selected.value.status = status
     ElMessage.success('机械状态已更新')
+    if (status === 'FAULT') {
+      ElMessage.warning('已生成故障接管方案并停止派入新任务，请前往「故障接管」台处置关联指令')
+    }
     await load()
   } catch (error) { ElMessage.error(error.message) }
 }

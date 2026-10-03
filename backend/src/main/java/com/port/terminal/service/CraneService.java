@@ -16,10 +16,12 @@ import org.springframework.stereotype.Service;
 @Service
 public class CraneService {
     private final CraneRepository craneRepository;
+    private final TakeoverService takeoverService;
     private final EntityManager entityManager;
 
-    public CraneService(CraneRepository craneRepository, EntityManager entityManager) {
+    public CraneService(CraneRepository craneRepository, TakeoverService takeoverService, EntityManager entityManager) {
         this.craneRepository = craneRepository;
+        this.takeoverService = takeoverService;
         this.entityManager = entityManager;
     }
 
@@ -57,10 +59,21 @@ public class CraneService {
     }
 
     @Transactional
-    public Crane changeStatus(Long craneId, String status) {
+    public Crane changeStatus(Long craneId, String status, String operator) {
         Crane crane = craneRepository.findById(craneId).orElseThrow(() -> new BizException("机械不存在"));
         if (!List.of("WORKING", "STANDBY", "FAULT").contains(status)) throw new BizException("机械状态无效");
+        String previous = crane.getStatus();
         crane.setStatus(status);
-        return craneRepository.save(crane);
+        Crane saved = craneRepository.save(crane);
+        String actor = (operator == null || operator.isBlank()) ? "调度员" : operator;
+        // 转入故障：立即生成接管方案并汇总关联指令（方案创建即停止派入新任务）
+        if (!"FAULT".equals(previous) && "FAULT".equals(status)) {
+            takeoverService.ensurePlan(saved, actor);
+        }
+        // 故障恢复：只解除未冻结指令，已转交的不抢回，暂停中的等待恢复确认
+        if ("FAULT".equals(previous) && !"FAULT".equals(status)) {
+            takeoverService.onCraneRecovered(saved, actor);
+        }
+        return saved;
     }
 }

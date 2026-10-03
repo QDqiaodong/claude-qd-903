@@ -4,7 +4,12 @@ const http = axios.create({ baseURL: '/api', timeout: 10000 })
 
 http.interceptors.response.use(
   response => response.data,
-  error => Promise.reject(new Error(error.response?.data?.message || error.message || '网络请求失败'))
+  error => {
+    const wrapped = new Error(error.response?.data?.message || error.message || '网络请求失败')
+    wrapped.status = error.response?.status
+    wrapped.data = error.response?.data?.data
+    return Promise.reject(wrapped)
+  }
 )
 
 export const yardApi = {
@@ -32,7 +37,7 @@ export const craneApi = {
   efficiency: () => http.get('/cranes/efficiency'),
   shifts: craneId => http.get(`/cranes/${craneId}/shifts`),
   registerShift: (craneId, data) => http.post(`/cranes/${craneId}/shifts`, data),
-  setStatus: (craneId, status) => http.put(`/cranes/${craneId}/status`, null, { params: { status } })
+  setStatus: (craneId, status, operator) => http.put(`/cranes/${craneId}/status`, null, { params: { status, operator } })
 }
 
 export const containerApi = {
@@ -45,5 +50,16 @@ export const operationApi = {
   gates: () => http.get('/operations/gates'),
   instructions: () => http.get('/operations/instructions'),
   createInstruction: data => http.post('/operations/instructions', data),
+  start: (id, craneCode) => http.post(`/operations/instructions/${id}/start`, { craneCode }),
+  advanceStage: (id, craneCode, stage) => http.post(`/operations/instructions/${id}/stage`, { craneCode, stage }),
   complete: id => http.post(`/operations/instructions/${id}/complete`)
+}
+
+export const takeoverApi = {
+  overview: () => http.get('/takeover/overview'),
+  plan: planId => http.get(`/takeover/plans/${planId}`),
+  candidates: itemId => http.get(`/takeover/items/${itemId}/candidates`),
+  decide: (planId, data) => http.post(`/takeover/plans/${planId}/decisions`, data),
+  pauseAll: (planId, data) => http.post(`/takeover/plans/${planId}/pause-all`, data),
+  resume: (planId, data) => http.post(`/takeover/plans/${planId}/resume`, data)
 }

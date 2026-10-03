@@ -4,6 +4,7 @@ import com.port.terminal.common.ApiResponse;
 import com.port.terminal.domain.GateTransaction;
 import com.port.terminal.domain.WorkInstruction;
 import com.port.terminal.dto.InstructionRequest;
+import com.port.terminal.dto.StageRequest;
 import com.port.terminal.service.OperationService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -30,6 +31,16 @@ public class OperationController {
     @PostMapping("/instructions")
     public ApiResponse<WorkInstruction> create(@Valid @RequestBody InstructionRequest request) {
         return ApiResponse.success("作业指令已创建", operationService.create(request));
+    }
+
+    @PostMapping("/instructions/{id}/start")
+    public ApiResponse<WorkInstruction> start(@PathVariable Long id, @Valid @RequestBody StageRequest request) {
+        return ApiResponse.success("指令已开工", operationService.start(id, request));
+    }
+
+    @PostMapping("/instructions/{id}/stage")
+    public ApiResponse<WorkInstruction> stage(@PathVariable Long id, @Valid @RequestBody StageRequest request) {
+        return ApiResponse.success("指令阶段已推进", operationService.advanceStage(id, request));
     }
 
     @PostMapping("/instructions/{id}/complete")

@@ -41,7 +41,8 @@ public class CraneController {
     }
 
     @PutMapping("/{craneId}/status")
-    public ApiResponse<Crane> status(@PathVariable Long craneId, @RequestParam String status) {
-        return ApiResponse.success("机械状态已更新", craneService.changeStatus(craneId, status));
+    public ApiResponse<Crane> status(@PathVariable Long craneId, @RequestParam String status,
+                                     @RequestParam(required = false) String operator) {
+        return ApiResponse.success("机械状态已更新", craneService.changeStatus(craneId, status, operator));
     }
 }
